@@ -1,0 +1,12 @@
+{
+  "name": "omnia-sessions",
+  "owner": { "name": "Omnia Studio" },
+  "description": "The Sessions plugin: your Claude Code sessions on your iPhone.",
+  "plugins": [
+    {
+      "name": "sessions",
+      "source": "./",
+      "description": "Shows your Claude Code sessions in the Sessions iPhone app."
+    }
+  ]
+}

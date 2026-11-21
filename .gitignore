@@ -1,0 +1,10 @@
+# Build output and test binaries (tool/sessions-hook is the one committed binary)
+build/
+tests/pairtest/pairtest
+*.dSYM/
+*.o
+
+# Python and macOS clutter
+__pycache__/
+*.pyc
+.DS_Store
