@@ -1,12 +1,12 @@
 {
-  "description": "Reports session status to the Sessions iPhone app. Each hook updates a small local file and returns; sending happens in a separate process.",
+  "description": "Reports session status to the Sessions iPhone app (macOS only; elsewhere every hook exits at once). Each hook updates a small local file and returns; sending happens in a separate process.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/sessions-hook\" hook",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/run.sh\" hook",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/sessions-hook\" hook",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/run.sh\" hook",
             "async": true
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/sessions-hook\" hook",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/run.sh\" hook",
             "async": true
           }
         ]
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/sessions-hook\" hook",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/run.sh\" hook",
             "async": true
           }
         ]
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/sessions-hook\" hook",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/run.sh\" hook",
             "timeout": 10
           }
         ]
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/sessions-hook\" hook",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/run.sh\" hook",
             "timeout": 10
           }
         ]
@@ -73,7 +73,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/sessions-hook\" hook"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/tool/run.sh\" hook"
           }
         ]
       }

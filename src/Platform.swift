@@ -84,6 +84,26 @@ enum Files {
 
     static func exists(_ url: URL) -> Bool { access(url.path, F_OK) == 0 }
 
+    /// Every file this tool writes in the state folder.
+    static var stateFiles: Set<String> {
+        Set([Paired.url, KeyStore.fileURL, StoreFile.url, StoreFile.lockURL, Sent.url].map { $0.lastPathComponent }
+            + ["send.lock", Sender.againMark, Sender.unknownMark, "log.txt", "log.1.txt"])
+    }
+
+    /// Deletes the state folder (`unpair`). Only this tool's own files go, with their half-written ".tmp.<pid>"
+    /// copies and Finder's .DS_Store, then the folder itself; nothing is deleted recursively, so a SESSIONS_HOME
+    /// that points at some other folder never loses anything else. Returns false when the folder is still there.
+    @discardableResult
+    static func removeHome() -> Bool {
+        let home = Env.home
+        let ours = stateFiles
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: home.path)) ?? [] {
+            let base = name.range(of: ".tmp.").map { String(name[..<$0.lowerBound]) } ?? name
+            if ours.contains(base) || name == ".DS_Store" { unlink(home.appendingPathComponent(name).path) }
+        }
+        return rmdir(home.path) == 0 || !exists(home)
+    }
+
     /// An empty 0600 file, made if it is not there: a mark.
     static func touch(_ url: URL) {
         ensureHome()

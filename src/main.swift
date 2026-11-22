@@ -2,7 +2,7 @@
 //
 //   sessions-hook hook                 run by Claude Code's hooks (JSON on stdin); prints nothing, returns at once
 //   sessions-hook pair <code>          pair with the phone using the six-digit code it shows
-//   sessions-hook unpair               forget the phone and remove this computer's box at the relay
+//   sessions-hook unpair               forget the phone, remove this computer's box at the relay and the local state folder
 //   sessions-hook status               where things stand
 //   sessions-hook send                 (internal) seal and send the state; started detached by `hook`
 //   OMNIA_KEY=<K> sessions-hook seal|open   the relay's sealing, for tests (same as mac/omniacrypt)
@@ -12,7 +12,7 @@
 import CryptoKit
 import Foundation
 
-let version = "0.1.0"
+let version = "0.1.2"
 let args = Array(CommandLine.arguments.dropFirst())
 
 enum Hook {
@@ -23,6 +23,7 @@ enum Hook {
         guard input.count < 4_000_000,
               let event = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any] else { return 0 }
         let lock = FileLock(StoreFile.lockURL, waitMs: 1000)
+        guard Files.exists(Paired.url) else { lock?.unlock(); return 0 }   // unpaired while this hook started
         var store = StoreFile.load()
         let changed = Events.apply(event, to: &store, now: Env.now)
         if changed {
@@ -134,7 +135,11 @@ enum Commands {
         let store = paired?.keyStore ?? Env.keyStore
         let k = KeyStore.load(store: store)
         guard paired != nil || k != nil else {
-            print("This computer is not connected to a phone.")
+            // Not paired (for example after the phone disconnected): still delete what an earlier pairing left.
+            let had = Files.exists(Env.home)
+            let removed = Files.removeHome()
+            print("This computer is not connected to a phone." + (had && removed ? " Its local Sessions data is deleted." : "")
+                  + leftNote(removed))
             return 0
         }
         // Stop any sender first, so nothing re-creates the box after it is deleted.
@@ -151,8 +156,15 @@ enum Commands {
             }
         }
         Paired.forget(keyStore: store)
-        print("Disconnected. This computer no longer sends sessions to your phone.\(relayNote)")
+        sendLock?.unlock()
+        print("Disconnected. This computer no longer sends sessions to your phone, and its pair key and local data are deleted."
+              + relayNote + leftNote(Files.removeHome()))
         return 0
+    }
+
+    /// Said when `unpair` could not delete the state folder because it holds files this tool did not make.
+    static func leftNote(_ removed: Bool) -> String {
+        removed ? "" : " The folder \(Env.home.path) also holds other files, so it was left in place."
     }
 
     static func status() -> Int32 {

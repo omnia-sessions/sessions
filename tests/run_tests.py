@@ -6,14 +6,16 @@
 Covers: sealing against mac/omniacrypt both ways, pairing against an independent X25519 + HKDF written here,
 the pairing's one-time ticket on the first PUT, the hook events and the requests they cause, card titles that are
 folder names only, the reply and its note, many long replies within the relay's limit, "not paired means nothing
-happens", the 3 s network limit, the Keychain store, unpairing, unpairing itself when the phone disconnected (410),
-a relay that no longer knows the pairing (403), and how long a hook takes.
+happens", the macOS guard in tool/run.sh (silent hooks and a "Mac only" answer elsewhere), the 3 s network limit, the
+Keychain store, unpairing (which deletes the state folder, and only this tool's files in it), unpairing itself when
+the phone disconnected (410), a relay that no longer knows the pairing (403), and how long a hook takes.
 """
 import base64, hashlib, hmac, json, os, secrets, shutil, statistics, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 TOOL = os.path.join(ROOT, "tool", "sessions-hook")
+RUN = os.path.join(ROOT, "tool", "run.sh")
 OMNIACRYPT = os.environ.get("OMNIACRYPT") or os.path.join(ROOT, "..", "mac", "omniacrypt")
 if not os.path.isfile(OMNIACRYPT):
     # Outside the Sessions source tree there is no mac/omniacrypt: open with sessions-hook itself
@@ -352,6 +354,43 @@ def main():
     check(p.returncode == 0 and p.stdout == b"" and not os.path.exists(lone) and not relay.take(),
           "with nothing paired a hook writes no file and sends nothing (%.1f ms)" % ms)
 
+    # -------------------------------------------------- 5b. the macOS guard: hooks and commands go through tool/run.sh
+    print("\n== macOS guard (tool/run.sh) ==")
+    hooks = json.load(open(os.path.join(ROOT, "hooks", "hooks.json")))["hooks"]
+    commands = [h["command"] for groups in hooks.values() for g in groups for h in g["hooks"]]
+    check(len(commands) == 7 and all(c == '"${CLAUDE_PLUGIN_ROOT}/tool/run.sh" hook' for c in commands),
+          "all seven hooks run tool/run.sh", json.dumps(commands))
+    skills = [open(os.path.join(ROOT, "skills", n, "SKILL.md")).read() for n in ("pair", "status", "unpair")]
+    check(all("/tool/run.sh" in s and "/tool/sessions-hook" not in s and "only in Claude Code on a Mac" in s for s in skills),
+          "the three commands run tool/run.sh and know the 'Mac only' answer")
+    check(os.access(RUN, os.X_OK), "tool/run.sh is executable")
+    direct, _ = tool(["status"], base_env(lone, relay.url))
+    p = subprocess.run([RUN, "status"], capture_output=True, env=base_env(lone, relay.url))
+    check(p.returncode == 0 and p.stdout == direct.stdout and p.stdout, "on macOS, run.sh passes the command on to sessions-hook")
+    p = subprocess.run([RUN, "hook"], input=ev("UserPromptSubmit", "S9", prompt="hello"), capture_output=True,
+                       env=base_env(lone, relay.url))
+    check(p.returncode == 0 and p.stdout == b"" and p.stderr == b"" and not os.path.exists(lone),
+          "on macOS, an unpaired hook through run.sh stays silent")
+    fakebin = os.path.join(tmp, "fakebin")
+    os.makedirs(fakebin)
+    with open(os.path.join(fakebin, "uname"), "w") as f:
+        f.write("#!/bin/sh\necho Linux\n")
+    os.chmod(os.path.join(fakebin, "uname"), 0o755)
+    linux = dict(base_env(lone, relay.url), PATH=fakebin + os.pathsep + os.environ.get("PATH", ""))
+    times = []
+    for i in range(10):
+        t0 = time.perf_counter()
+        p = subprocess.run([RUN, "hook"], input=ev("Stop", "S9"), capture_output=True, env=linux)
+        times.append((time.perf_counter() - t0) * 1000)
+    check(p.returncode == 0 and p.stdout == b"" and p.stderr == b"" and not os.path.exists(lone) and not relay.take(),
+          "elsewhere (uname says Linux, as in Cowork) a hook exits 0 at once, prints nothing, stores and sends nothing "
+          "(median %.1f ms)" % statistics.median(times))
+    for cmd in (["pair", "123456"], ["status"], ["unpair"]):
+        p = subprocess.run([RUN] + cmd, capture_output=True, env=linux)
+        check(p.returncode == 0 and p.stdout.decode().strip() == "Sessions works only in Claude Code on a Mac."
+              and not os.path.exists(lone), "elsewhere, %s says it works only in Claude Code on a Mac" % cmd[0],
+              p.stdout.decode().strip())
+
     # -------------------------------------------------- 6. timing (default detached sending)
     print("\n== timing ==")
     denv = base_env(home, relay.url, send="detached")
@@ -402,8 +441,10 @@ def main():
     check(p.stdout.decode().startswith("Disconnected.") and any(r["method"] == "DELETE" and r["path"] == "/v1/box" for r in reqs)
           and not os.path.exists(os.path.join(home, "pair-key")) and not os.path.exists(os.path.join(home, "paired.json")),
           "unpair deletes the box at the relay and the local key and state")
+    check(not os.path.exists(home), "unpair deletes the whole state folder (store, log, locks)",
+          str(os.listdir(home)) if os.path.isdir(home) else "")
     p, _ = tool(["hook"], base_env(home, relay.url), ev("UserPromptSubmit", "S5", prompt="after"))
-    check(not relay.take(), "after unpair, hooks send nothing")
+    check(not relay.take() and not os.path.exists(home), "after unpair, hooks send nothing and write nothing")
 
     # -------------------------------------------------- 8b. the phone disconnected: the relay answers 410
     print("\n== the phone disconnected (410) ==")
@@ -429,13 +470,20 @@ def main():
           "later hooks send nothing and log nothing")
     p, _ = tool(["status"], genv)
     check(p.stdout.decode().startswith("Not connected to a phone."), "status says it is not connected")
+    p, _ = tool(["unpair"], genv)
+    check(p.stdout.decode().strip() == "This computer is not connected to a phone. Its local Sessions data is deleted."
+          and not os.path.exists(ghome) and not relay.take(),
+          "unpair after the phone unpaired it: deletes the folder that is left (the log), sends nothing", p.stdout.decode().strip())
+    p, _ = tool(["unpair"], genv)
+    check(p.stdout.decode().strip() == "This computer is not connected to a phone." and not os.path.exists(ghome),
+          "unpair with nothing left: says so and makes no folder", p.stdout.decode().strip())
     p, got, k_g2 = phone_pair(relay, genv, "640032")
     phone_delete(relay, k_g2)
     relay.take()
     p, _ = tool(["unpair"], genv)
-    check(p.stdout.decode().strip() == "Disconnected. This computer no longer sends sessions to your phone."
-          and not os.path.exists(os.path.join(ghome, "pair-key")),
-          "unpair after the phone disconnected: a plain 'Disconnected.', no relay warning", p.stdout.decode().strip())
+    check(p.stdout.decode().strip() == "Disconnected. This computer no longer sends sessions to your phone, "
+          "and its pair key and local data are deleted." and not os.path.exists(ghome),
+          "unpair after the phone disconnected: a plain 'Disconnected.', no relay warning, folder deleted", p.stdout.decode().strip())
     relay.take()
 
     # -------------------------------------------------- 8c. the relay no longer knows the pairing: 403
@@ -476,7 +524,13 @@ def main():
     check(any(r["path"] == "/v1/state" for r in relay.take()), "the next sender sends, and the mark is cleared",
           str(os.listdir(fhome)))
     check(not os.path.exists(os.path.join(fhome, "send.again")), "no mark left behind")
-    tool(["unpair"], fenv)
+    # A state folder that also holds someone else's file: unpair deletes only its own files and keeps the folder.
+    open(os.path.join(fhome, "keep-me.txt"), "w").write("not made by Sessions")
+    open(os.path.join(fhome, "sessions.json.tmp.99999"), "w").write("{}")
+    p, _ = tool(["unpair"], fenv)
+    check(sorted(os.listdir(fhome)) == ["keep-me.txt"] and "also holds other files" in p.stdout.decode(),
+          "unpair deletes only its own files (and half-written copies), never someone else's, and says the folder stays",
+          "%s / %s" % (sorted(os.listdir(fhome)), p.stdout.decode().strip()))
     relay.take()
 
     # -------------------------------------------------- 9. Keychain store (a throwaway service name, removed again)

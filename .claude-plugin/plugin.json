@@ -1,17 +1,30 @@
 {
   "name": "sessions",
   "displayName": "Sessions",
-  "version": "0.1.1",
-  "description": "Shows your Claude Code sessions in the Sessions iPhone app: which need you, which are working, which finished. Sealed on this computer; the relay cannot read it.",
+  "version": "0.1.2",
+  "description": "See your Claude Code sessions on your iPhone: which need you, which are working, which are done. Needs Claude Code on a Mac and the Sessions iPhone app. The session list is end-to-end encrypted.",
   "author": {
-    "name": "Omnia Studio"
+    "name": "Omnia Studio",
+    "url": "https://omnia-relay.veldhub.workers.dev/support"
   },
   "homepage": "https://github.com/omnia-sessions/sessions",
   "repository": "https://github.com/omnia-sessions/sessions",
+  "documentationUrl": "https://github.com/omnia-sessions/sessions#readme",
+  "supportUrl": "https://omnia-relay.veldhub.workers.dev/support",
+  "privacyPolicyUrl": "https://omnia-relay.veldhub.workers.dev/privacy",
+  "termsOfServiceUrl": "https://omnia-relay.veldhub.workers.dev/terms",
+  "icon": "./assets/icon.png",
+  "license": "MIT",
   "keywords": [
     "iphone",
+    "macos",
     "status",
     "notifications",
     "live-activity"
-  ]
+  ],
+  "network": {
+    "hosts": [
+      "omnia-relay.veldhub.workers.dev"
+    ]
+  }
 }
