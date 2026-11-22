@@ -10,54 +10,56 @@ Sessions is made by Omnia Studio. It is not affiliated with or endorsed by Anthr
 - Claude Code, in the terminal or in the Claude desktop app.
 - The Sessions app on your iPhone.
 
-## Install and connect in one step
+## Install and connect
 
-1. In the Sessions app, tap **Connect**. It shows a six-digit code.
-2. Paste this line into Claude Code, put your code in place of `123456`, and press Enter:
+Type these two commands into Claude Code on your Mac. They work in the Code tab of the Claude app and in Claude Code in the Terminal.
+
+1. Add the plugin, once per Mac:
 
    ```
-   Set up Sessions for my iPhone. Use Bash to run `"${CLAUDE_CODE_EXECPATH:-claude}" plugin install sessions --marketplace Abood4y/sessions`, then `"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/omnia-sessions/sessions/*/tool/sessions-hook pair 123456`, tell me what it printed, and remind me to run /reload-plugins.
+   /plugin install sessions --marketplace omnia-sessions/sessions
    ```
 
-3. Allow the two commands when Claude Code asks. Claude says "Connected to your iPhone", and the phone shows your computer's name.
-4. Run `/reload-plugins`, or open a new session, so this session shows up on the phone too.
+   Claude Code shows where the plugin comes from and asks you to confirm. If it then says to run `/reload-plugins`, type that too.
 
-The code works once and expires after 10 minutes. The line also works in the Claude desktop app, where `claude` is usually not a terminal command: it runs the program Claude Code itself runs from.
-
-## Install from a terminal
-
-If the `claude` command works in your terminal:
-
-```sh
-claude plugin install sessions --marketplace Abood4y/sessions
-```
-
-That command needs Claude Code 2.1.292 or later. On older versions, run these two lines instead:
-
-```sh
-claude plugin marketplace add Abood4y/sessions
-claude plugin install sessions@omnia-sessions
-```
-
-If Claude Code is already open, run `/reload-plugins` in it.
-
-## Connect your iPhone
-
-1. In the Sessions app, tap **Connect**. It shows a six-digit code.
-2. In Claude Code, type the code after the pair command:
+2. In the Sessions app, tap **Connect**. It shows a six-digit code. Pair with it:
 
    ```
    /sessions:pair 123456
    ```
 
-3. Claude Code says "Connected to your iPhone", and the phone shows your computer's name.
+   Claude Code says "Connected to your iPhone", and the phone shows your Mac's name.
+
+The code works once and expires after 10 minutes. The app's Connect screen, and the page at `https://omnia-relay.veldhub.workers.dev/connect`, give you both commands to copy, with your code already in the second.
+
+If your Claude Code does not know `--marketplace`, type these two instead, one at a time:
+
+```
+/plugin marketplace add omnia-sessions/sessions
+/plugin install sessions@omnia-sessions
+```
 
 Other commands:
 
-- `/sessions:status` shows whether this computer is connected.
-- `/sessions:unpair` disconnects this computer and deletes its key.
+- `/sessions:status` shows whether this Mac is connected.
+- `/sessions:unpair` disconnects this Mac and deletes its key.
 
-The commands appear after `/reload-plugins` or in a new session. Before that, the same tool runs from its install folder:
+### From the command line instead
+
+If the `claude` command works in your terminal, this installs the plugin without opening Claude Code:
+
+```sh
+claude plugin install sessions --marketplace omnia-sessions/sessions
+```
+
+That command needs Claude Code 2.1.292 or later. On older versions, run these two lines instead:
+
+```sh
+claude plugin marketplace add omnia-sessions/sessions
+claude plugin install sessions@omnia-sessions
+```
+
+If Claude Code is already open, run `/reload-plugins` in it, then pair with `/sessions:pair` as above. The pair tool also runs straight from its install folder:
 
 ```sh
 ~/.claude/plugins/cache/omnia-sessions/sessions/0.1.0/tool/sessions-hook pair 123456

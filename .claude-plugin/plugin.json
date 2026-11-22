@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Shows your Claude Code sessions in the Sessions iPhone app: which need you, which are working, which finished. Sealed on this computer; the relay cannot read it.",
   "author": { "name": "Omnia Studio" },
-  "homepage": "https://github.com/Abood4y/sessions",
-  "repository": "https://github.com/Abood4y/sessions",
+  "homepage": "https://github.com/omnia-sessions/sessions",
+  "repository": "https://github.com/omnia-sessions/sessions",
   "keywords": ["iphone", "status", "notifications", "live-activity"]
 }
