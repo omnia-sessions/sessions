@@ -81,6 +81,15 @@ enum Files {
     }
 
     static func remove(_ url: URL) { unlink(url.path) }
+
+    static func exists(_ url: URL) -> Bool { access(url.path, F_OK) == 0 }
+
+    /// An empty 0600 file, made if it is not there: a mark.
+    static func touch(_ url: URL) {
+        ensureHome()
+        let fd = open(url.path, O_CREAT | O_WRONLY | O_CLOEXEC, 0o600)
+        if fd >= 0 { close(fd) }
+    }
 }
 
 /// An advisory lock on a file, so hooks and the sender never write the same file at once.
@@ -134,12 +143,14 @@ enum Log {
     }
 }
 
-/// Written when pairing succeeds. Holds no secret; its presence means "paired".
+/// Written when pairing succeeds; its presence means "paired". No key in it: only, until the box exists at the relay,
+/// the pairing's one-time ticket, which lets this computer's first PUT make the box and nothing else.
 struct Paired: Codable {
     var relay: String
     var mac: String
     var at: Int
     var keyStore: String
+    var ticket: String? = nil
 
     static var url: URL { Env.file("paired.json") }
 
@@ -158,7 +169,7 @@ struct Paired: Codable {
         Files.remove(url)
         KeyStore.delete(store: keyStore)
         let lock = FileLock(StoreFile.lockURL, waitMs: 1000)
-        for name in ["sessions.json", "sent.json"] { Files.remove(Env.file(name)) }
+        for name in ["sessions.json", "sent.json", Sender.unknownMark] { Files.remove(Env.file(name)) }
         lock?.unlock()
     }
 }

@@ -65,10 +65,14 @@ enum Commands {
         switch r.status {
         case 200: break
         case 404:
-            print("That code was not found or has expired. Make a new code in the Sessions app and try again.")
+            print("That code was not found or has expired, or another computer used it. Make a new code in the Sessions app and try again.")
+            return 0
+        case 415:
+            Log.write("pair: POST /v1/pair/join answered HTTP 415")
+            print("The Sessions relay did not take the request (HTTP 415). Update the plugin, then try again.")
             return 0
         case 429:
-            print("Too many tries from this network. Wait a few minutes, then try again.")
+            print("Too many tries for now. Wait a few minutes, then try again.")
             return 0
         default:
             Log.write("pair: POST /v1/pair/join answered HTTP \(r.status)")
@@ -81,6 +85,10 @@ enum Commands {
             print("The phone's answer could not be read. Make a new code in the Sessions app and try again.")
             return 0
         }
+        // The pairing's one-time ticket: this computer's first sealed PUT makes the box with it (64 hex characters).
+        let ticket = (answer["ticket"] as? String).flatMap { t in
+            t.count == 64 && t.unicodeScalars.allSatisfy({ ("0"..."9").contains($0) || ("a"..."f").contains($0) }) ? t : nil
+        }
 
         let oldK = previous.flatMap { KeyStore.load(store: $0.keyStore) }
         let store = Env.keyStore
@@ -90,12 +98,13 @@ enum Commands {
             return 0
         }
         do {
-            try Paired(relay: base, mac: mac, at: Env.now, keyStore: store).save()
+            try Paired(relay: base, mac: mac, at: Env.now, keyStore: store, ticket: ticket).save()
         } catch {
             print("Could not save the pairing in \(Env.home.path).")
             return 0
         }
         Files.remove(Sent.url)   // a new box: send everything again
+        Files.remove(Env.file(Sender.unknownMark))
 
         // Show the session the command was typed in straight away.
         if let session, !session.isEmpty, !session.hasPrefix("$") {
@@ -111,7 +120,7 @@ enum Commands {
             lock?.unlock()
         }
 
-        // The first sealed state creates the box.
+        // The first sealed state creates the box (with the ticket).
         if !Sender.run() { Log.write("pair: the first state did not reach the relay; the next hook retries") }
         if let oldK, oldK != k {
             _ = HTTP.send("DELETE", (Env.relayBase(paired: previous) ?? base) + "/v1/box", body: nil, headers: Box.headers(oldK), timeout: 3)
@@ -156,6 +165,9 @@ enum Commands {
         let hasKey = KeyStore.load(store: paired.keyStore) != nil
         print("Connected since \(Date(timeIntervalSince1970: TimeInterval(paired.at)).formatted()) as \"\(paired.mac)\".")
         print("Relay: \(Env.relayBase(paired: paired) ?? "invalid address"). Pair key: \(hasKey ? "in the \(paired.keyStore)" : "missing").")
+        if Files.exists(Env.file(Sender.unknownMark)) {
+            print("The relay no longer knows this pairing (it deletes one neither device used for 30 days). Make a new code in the Sessions app and run /sessions:pair with it.")
+        }
         print("Sessions: \(snap.counts.need) need you, \(snap.counts.working) working, \(snap.counts.finished) finished.")
         print("Log: \(Env.file("log.txt").path)")
         return 0

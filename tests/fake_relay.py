@@ -3,8 +3,10 @@
 Implements the paths the plugin uses, with the box rules of research/launch-with-claude-spec.md:
 /v1/pair/start, /v1/pair/join, GET /v1/pair/<code>, PUT|GET /v1/state, POST /v1/push/notify, DELETE /v1/box.
 Like the real relay, a deleted box stays gone: every later request with it gets 410 {"error": "gone"}.
+And like it, a box is made only by a PUT that carries the one-time ticket the join answered (x-ticket); without
+one, a PUT for a box that does not exist gets 403 {"error": "pair"}.
 """
-import hashlib, json, re, socket, threading, time
+import hashlib, json, re, secrets, socket, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -16,6 +18,7 @@ class Relay:
         self.pairs = {}             # code -> {"phone": pub, "computer": pub, "name": str}
         self.boxes = {}             # box -> {"auth": hash, "state": text, "v": n}
         self.gone = set()           # hashes of deleted boxes
+        self.tickets = {}           # ticket -> the box it made, or None while unused
         self.lock = threading.Lock()
         relay = self
 
@@ -73,6 +76,11 @@ class Relay:
         if method == "PUT" and path == "/v1/state":
             if not body:
                 return 413, {"error": "size"}
+            if not known:
+                ticket = headers.get("x-ticket", "")
+                if ticket not in self.tickets or self.tickets[ticket] not in (None, box):
+                    return 403, {"error": "pair"}
+                self.tickets[ticket] = box
             entry = self.boxes.setdefault(box, {"auth": auth_hash, "v": 0})
             entry["state"], entry["v"] = body, entry["v"] + 1
             return 200, {"ok": True}
@@ -100,7 +108,9 @@ class Relay:
             if not re.match(r"^\d{6}$", d.get("code", "")) or not p or "computer" in p:
                 return 404, {"error": "unknown code"}
             p["computer"], p["name"] = d["pub"], d.get("name", "")
-            return 200, {"pub": p["phone"]}
+            p["ticket"] = secrets.token_hex(32)
+            self.tickets[p["ticket"]] = None
+            return 200, {"pub": p["phone"], "ticket": p["ticket"]}
         m = re.match(r"^/v1/pair/(\d{6})$", path)
         if method == "GET" and m:
             p = self.pairs.get(m.group(1))

@@ -4,9 +4,10 @@
     python3 -I tests/run_tests.py            (OMNIACRYPT=/path/to/omniacrypt to use another opener)
 
 Covers: sealing against mac/omniacrypt both ways, pairing against an independent X25519 + HKDF written here,
-the hook events and the requests they cause, the reply and its note, many long replies within the relay's limit,
-"not paired means nothing happens", the 3 s network limit, the Keychain store, unpairing, unpairing itself when
-the phone disconnected (410), and how long a hook takes.
+the pairing's one-time ticket on the first PUT, the hook events and the requests they cause, card titles that are
+folder names only, the reply and its note, many long replies within the relay's limit, "not paired means nothing
+happens", the 3 s network limit, the Keychain store, unpairing, unpairing itself when the phone disconnected (410),
+a relay that no longer knows the pairing (403), and how long a hook takes.
 """
 import base64, hashlib, hmac, json, os, secrets, shutil, statistics, subprocess, sys, tempfile, time
 
@@ -198,6 +199,10 @@ def main():
     check(len(states) == 1 and states[0] and states[0]["snapshot"]["sessions"][0]["id"] == "sess-pair",
           "the first sealed PUT creates the box and shows the session the command ran in")
     put = [r for r in reqs if r["method"] == "PUT"][0]
+    check(put["headers"].get("x-ticket") and put["headers"]["x-ticket"] in relay.tickets
+          and relay.tickets[put["headers"]["x-ticket"]] == put["headers"]["x-box"],
+          "the first PUT carries the join's one-time ticket, which made the box", str(put["headers"].get("x-ticket")))
+    check("ticket" not in json.load(open(os.path.join(home, "paired.json"))), "once the box exists the ticket is dropped from paired.json")
     check(put["headers"]["x-box"] == hashlib.sha256(("box|" + k_plugin).encode()).hexdigest()
           and put["headers"]["x-auth"] == hashlib.sha256(("auth|" + k_plugin).encode()).hexdigest(),
           "x-box and x-auth are the hashes of K")
@@ -210,13 +215,14 @@ def main():
 
     # -------------------------------------------------- 4. hook events (sends inline so the requests can be read)
     print("\n== hook events ==")
-    hook_out, all_notifies = [], []
+    hook_out, all_notifies, all_reqs = [], [], []
 
     def step(payload):
         p, ms = tool(["hook"], env, payload)
         hook_out.append((p.returncode, p.stdout, p.stderr))
         store = json.load(open(os.path.join(home, "sessions.json")))
         reqs = relay.take()
+        all_reqs.extend(reqs)
         all_notifies.extend(notifies(reqs))
         return store, opened_states(reqs, k_plugin), notifies(reqs), reqs
 
@@ -238,6 +244,8 @@ def main():
           "notify start when a session starts working, no alert", json.dumps(nt))
     item = nt[0]["contentState"]["items"][0] if nt else {}
     check(len(item.get("title", "")) <= 40 and item.get("note") == "", "card title at most 40 characters, empty note", json.dumps(item))
+    check(item.get("title") == "omnia-site" and snap["sessions"][0]["title"].startswith("Fix the login page"),
+          "the card's title is the folder name; the prompt's first line is only in the sealed state", json.dumps(item))
     print("  card:", json.dumps(nt[0]["contentState"]) if nt else None)
 
     s, st, nt, _ = step(ev("Notification", "S1", message="Claude needs your permission to use Bash", title="Permission needed",
@@ -262,10 +270,14 @@ def main():
 
     age(61, 100)
     s, st, nt, reqs = step(ev("PostToolUse", "S1", tool_name="Read", tool_input={}, tool_response={}))
-    check(len(st) == 1 and not nt, "heartbeat: a minute later PostToolUse refreshes the sealed state, no push (last notify 100 s ago)")
+    check(not reqs and s["sessions"]["S1"]["last"] >= int(time.time()) - 5,
+          "a minute of work moves the session's last time, which the phone does not show: no PUT, no push", str(len(reqs)))
+    age(301, 100)
+    s, st, nt, reqs = step(ev("PostToolUse", "S1", tool_name="Read", tool_input={}, tool_response={}))
+    check(len(st) == 1 and not nt, "heartbeat: 5 minutes after the last PUT, PostToolUse refreshes the sealed state, no push (last notify 100 s ago)")
     age(61, 301)
     s, st, nt, reqs = step(ev("PostToolUse", "S1", tool_name="Read", tool_input={}, tool_response={}))
-    check(len(st) == 1 and len(nt) == 1 and nt[0]["event"] == "update" and nt[0]["alert"] is None,
+    check(not st and len(nt) == 1 and nt[0]["event"] == "update" and nt[0]["alert"] is None,
           "heartbeat: with the last notify 5 minutes ago, a working session sends an 'update' to keep the card fresh", json.dumps(nt))
 
     reply = "I fixed the login button.\n\nThe layout now wraps on narrow screens.\n" + "It also keeps the logo in view. " * 70
@@ -301,6 +313,10 @@ def main():
     s, st, nt, _ = step(ev("SessionEnd", "S1", reason="other"))
     check(s["sessions"] == {} and st and st[-1]["snapshot"]["sessions"] == [], "after both end, the phone gets an empty list")
     check(all(c == 0 and out == b"" and err == b"" for c, out, err in hook_out), "every hook exited 0 and printed nothing")
+    check(any(r["method"] == "PUT" for r in all_reqs) and not any("x-ticket" in r["headers"] for r in all_reqs),
+          "after the first PUT made the box, no request carries the ticket")
+    check(all(i["title"] in ("omnia-site", "relay") for n in all_notifies for i in n["contentState"]["items"]),
+          "every card title in the whole run is a folder name", json.dumps([i["title"] for n in all_notifies for i in n["contentState"]["items"]]))
     check(all_notifies and not any(w in json.dumps(n) for n in all_notifies for w in ("fixed", "logo in view", "wraps", "reply")),
           "no notify in this whole run carried reply text (%d notifies)" % len(all_notifies))
 
@@ -420,6 +436,47 @@ def main():
     check(p.stdout.decode().strip() == "Disconnected. This computer no longer sends sessions to your phone."
           and not os.path.exists(os.path.join(ghome, "pair-key")),
           "unpair after the phone disconnected: a plain 'Disconnected.', no relay warning", p.stdout.decode().strip())
+    relay.take()
+
+    # -------------------------------------------------- 8c. the relay no longer knows the pairing: 403
+    print("\n== the relay forgot the pairing (403) ==")
+    fhome = os.path.join(tmp, "fhome")
+    fenv = base_env(fhome, relay.url)
+    p, got, k_f = phone_pair(relay, fenv, "640033")
+    relay.take()
+    relay.boxes.pop(hashlib.sha256(("box|" + k_f).encode()).hexdigest(), None)   # the 30-day clean-up took it
+    for i in range(2):
+        tool(["hook"], fenv, ev("UserPromptSubmit", "F%d" % i, prompt="After the clean-up"))
+    reqs = relay.take()
+    log = open(os.path.join(fhome, "log.txt")).read().strip().splitlines()
+    check([(r["method"], r["path"]) for r in reqs] == [("PUT", "/v1/state")] * 2, "403: no notify after it, nothing made",
+          str([(r["method"], r["path"]) for r in reqs]))
+    check(len([l for l in log if "403" in l]) == 1 and os.path.exists(os.path.join(fhome, "pair-key")), "logged once; the key stays", str(log))
+    p, _ = tool(["status"], fenv)
+    check("no longer knows this pairing" in p.stdout.decode(), "status says to pair again", p.stdout.decode())
+    p, got, k_f2 = phone_pair(relay, fenv, "640034")
+    p, _ = tool(["status"], fenv)
+    check("no longer knows" not in p.stdout.decode() and hashlib.sha256(("box|" + k_f2).encode()).hexdigest() in relay.boxes,
+          "a new pairing makes the box again and clears the note")
+    relay.take()
+
+    # -------------------------------------------------- 8d. a sender that finds another at work does not wait
+    print("\n== senders do not queue ==")
+    held = open(os.path.join(fhome, "send.lock"), "a")
+    import fcntl
+    fcntl.flock(held, fcntl.LOCK_EX)
+    t0 = time.perf_counter()
+    p, _ = tool(["send"], fenv)
+    waited = time.perf_counter() - t0
+    check(waited < 1 and not relay.take() and os.path.exists(os.path.join(fhome, "send.again")),
+          "with the send lock held, a sender leaves its mark and exits at once (%.2f s)" % waited)
+    fcntl.flock(held, fcntl.LOCK_UN)
+    held.close()
+    tool(["hook"], fenv, ev("Stop", "F1", last_assistant_message="done"))
+    check(any(r["path"] == "/v1/state" for r in relay.take()), "the next sender sends, and the mark is cleared",
+          str(os.listdir(fhome)))
+    check(not os.path.exists(os.path.join(fhome, "send.again")), "no mark left behind")
+    tool(["unpair"], fenv)
     relay.take()
 
     # -------------------------------------------------- 9. Keychain store (a throwaway service name, removed again)

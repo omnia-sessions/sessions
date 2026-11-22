@@ -17,6 +17,9 @@ struct Rec: Codable, Equatable {
     var visible: Bool              // shown once it has had a prompt, or was resumed
     var finishAlerted: Bool?
     var stalled: Bool?
+    /// The folder's name, the only title the Lock Screen card uses (it passes the relay and Apple readable). The
+    /// title above may be the start of a prompt; that one is only ever sealed. Nil in stores from before it.
+    var folder: String? = nil
 }
 
 struct StoreFile: Codable, Equatable {
@@ -93,7 +96,8 @@ enum Events {
 
         func fresh() -> Rec {
             Rec(id: sid, title: Text.folderTitle(cwd), titleFrom: "folder", state: "done", reply: nil, needs: nil,
-                since: now, started: now, last: now, turns: 0, visible: false, finishAlerted: nil, stalled: nil)
+                since: now, started: now, last: now, turns: 0, visible: false, finishAlerted: nil, stalled: nil,
+                folder: Text.folderTitle(cwd))
         }
 
         let before = store.sessions[sid]
@@ -202,6 +206,7 @@ enum Events {
         }
 
         if let custom { r.title = custom; r.titleFrom = "custom" }
+        if let cwd, !cwd.isEmpty { r.folder = Text.folderTitle(cwd) }
         if before != r {
             store.sessions[sid] = r
             changed = true
@@ -338,9 +343,15 @@ enum Picture {
         return Snap(updated: now, mac: Text.clip(mac, 60), counts: counts, sessions: Array(sessions))
     }
 
-    static func card(_ snap: Snap) -> CardState {
+    /// The card's title for each session: its folder's name, never the start of a prompt or a custom title.
+    static func cardTitles(_ store: StoreFile) -> [String: String] {
+        store.sessions.mapValues { $0.folder ?? ($0.titleFrom == "folder" ? $0.title : "Session") }
+    }
+
+    /// The Lock Screen card. Its titles are `titles` (folder names, `cardTitles`), so no prompt text is ever in it.
+    static func card(_ snap: Snap, titles: [String: String]) -> CardState {
         let items = snap.sessions.filter { $0.state != "done" }.prefix(maxCardItems).map {
-            CardState.Item(id: $0.id, title: Text.clip($0.title, 40), note: "", state: $0.state, since: $0.since)
+            CardState.Item(id: $0.id, title: Text.clip(titles[$0.id] ?? "Session", 40), note: "", state: $0.state, since: $0.since)
         }
         return CardState(need: snap.counts.need, working: snap.counts.working, finished: snap.counts.finished,
                          updated: snap.updated, macAwake: true, items: Array(items))
@@ -356,10 +367,13 @@ enum Picture {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Changes when anything the phone shows changes, not with the clock.
+    /// Changes when anything the phone shows changes, not with the clock: not with `updated`, and not with a
+    /// session's `last`, which PostToolUse moves every minute of work and the phone does not show. (A change in the
+    /// order it gives the sessions still counts.) The heartbeat in Sender carries the new times along.
     static func stateFingerprint(_ snap: Snap) -> String {
         var s = snap
         s.updated = 0
+        s.sessions = s.sessions.map { var x = $0; x.last = nil; return x }
         return digest(encode(s))
     }
 

@@ -75,7 +75,7 @@ If Claude Code is already open, run `/reload-plugins` in it, then pair with `/se
 The plugin uses Claude Code hooks: session start, prompt sent, notification, tool finished, stop and session end. Each one updates a small file in `~/.omnia-sessions-plugin/` and returns at once. A separate process then sends the update.
 
 - **To your phone, sealed:** the sessions list. For each session it sends a title (the folder name or the start of your first prompt), its state, Claude's last reply (up to 2,000 characters, plus a 300-character preview), and the times. It is encrypted on this computer with a key that only your phone and this computer have. The relay stores it but cannot read it.
-- **To the relay, readable:** counts and short session titles (at most 40 characters) for the Lock Screen card, and the alert texts "A session needs you" or "A session finished". iOS draws the card from the push itself, so this part cannot be encrypted. Claude's replies and your prompts are never in it.
+- **To the relay, readable:** for the Lock Screen card, counts and, for each session that is working or needs you, its folder name (at most 40 characters) and its Claude Code session ID; and the alert texts "A session needs you" or "A session finished". iOS draws the card from the push itself, so this part cannot be encrypted. The card always uses the folder name, never the start of a prompt, so Claude's replies and your prompts are never in it.
 - **The pair key** is in your login Keychain, under "Sessions pair key". On systems without a Keychain it is in a file that only you can read.
 
 Nothing is sent until you pair, and nothing after you unpair. If you tap Disconnect on the phone, this computer notices on its next send and unpairs itself.

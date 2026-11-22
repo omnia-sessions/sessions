@@ -1,5 +1,6 @@
 // Seals the state, leaves it at the relay, and asks the relay for a push when the picture changed.
-// Runs detached from the hook, one at a time, every request limited to 3 seconds.
+// Runs detached from the hook, one at a time, every request limited to 3 seconds. A sender that finds another one at
+// work does not wait for it: it leaves a mark, and the one at work sends once more when it is done.
 import Foundation
 
 /// What the sender last delivered, so it only sends what changed.
@@ -22,8 +23,16 @@ struct Sent: Codable {
 
 enum Sender {
     static let timeout: TimeInterval = 3
-    static let heartbeat = 55          // seconds between sealed state PUTs while something happens
+    /// Seconds between sealed state PUTs while something happens but nothing the phone shows changed. The phone
+    /// never reads "asleep" from the age of a plugin's state, and the card goes stale only after 20 minutes.
+    static let heartbeat = 300
     static let cardHeartbeat = 300     // seconds between card refreshes while a session works
+    /// "Something changed since the last send began": left by a sender that found another at work.
+    static let againMark = "send.again"
+    /// Left when the relay answered 403 "pair": it does not know this pairing (see `status`).
+    static let unknownMark = "relay-unknown"
+    /// At most this many sends in a row for marks left meanwhile; a later hook starts the next sender.
+    static let maxRounds = 20
 
     /// Called by a hook after it changed the store.
     static func kick() {
@@ -35,15 +44,28 @@ enum Sender {
         }
     }
 
+    /// Sends what changed. When another sender holds the lock, leaves the mark for it and returns at once (true:
+    /// handed over). The holder clears the mark before each send and looks for it after unlocking, so a change
+    /// made while it sent goes out in one more round, and none is left behind.
     @discardableResult
     static func run() -> Bool {
         guard Paired.load() != nil else { return false }
-        guard let lock = FileLock(Env.file("send.lock"), waitMs: 8000) else {
-            Log.write("send: another sender held the lock too long; skipped")
-            return false
+        let again = Env.file(againMark)
+        Files.touch(again)
+        var ok = true
+        for _ in 0..<maxRounds {
+            guard let lock = FileLock(Env.file("send.lock"), waitMs: 0) else { return ok }
+            Files.remove(again)
+            ok = once()
+            lock.unlock()
+            if !Files.exists(again) { break }
         }
-        defer { lock.unlock() }
-        guard let paired = Paired.load() else { return false }   // unpaired while waiting
+        return ok
+    }
+
+    /// One send, while holding the lock.
+    private static func once() -> Bool {
+        guard let paired = Paired.load() else { return false }   // unpaired meanwhile
         guard let k = KeyStore.load(store: paired.keyStore) else {
             Log.write("send: no pair key found (\(paired.keyStore)); run /sessions:pair again")
             return false
@@ -67,14 +89,32 @@ enum Sender {
             if let sealed = try? Box.seal(plain, k: k) {
                 var headers = Box.headers(k)
                 headers["Content-Type"] = "text/plain"
+                // Until the box exists at the relay, the pairing's ticket goes along: only it lets the first PUT make it.
+                if let ticket = paired.ticket { headers["x-ticket"] = ticket }
                 let r = HTTP.send("PUT", base + "/v1/state", body: Data(sealed.utf8), headers: headers, timeout: timeout)
                 if r?.status == 410 { return phoneDisconnected(paired, "PUT /v1/state") }
                 if let r, r.status == 200 {
                     sent.stateFP = stateFP
                     sent.putAt = now
+                    if paired.ticket != nil {
+                        var done = paired
+                        done.ticket = nil
+                        try? done.save()
+                    }
+                    Files.remove(Env.file(unknownMark))
+                } else if r?.status == 403 {
+                    // The relay keeps no box for this pairing and the ticket cannot make one: neither device used it
+                    // for 30 days (the relay deleted it), or the ticket ran out before the first PUT. The key stays;
+                    // a new pairing is needed. Logged once.
+                    ok = false
+                    reachable = false
+                    if !Files.exists(Env.file(unknownMark)) {
+                        Files.touch(Env.file(unknownMark))
+                        Log.write("send: PUT /v1/state answered 403: the relay does not know this pairing any more; run /sessions:pair with a new code")
+                    }
                 } else {
                     ok = false
-                    reachable = r != nil
+                    reachable = r != nil && r?.status != 503
                     Log.write("send: PUT /v1/state failed: \(r.map { "HTTP \($0.status)" } ?? "no answer in \(Int(timeout)) s")")
                 }
             } else {
@@ -84,7 +124,7 @@ enum Sender {
         }
 
         // The card starts when a session starts working and ends when none is working or waiting.
-        let card = Picture.card(snap)
+        let card = Picture.card(snap, titles: Picture.cardTitles(store))
         let active = card.need + card.working > 0
         let cardFP = Picture.cardFingerprint(card)
         var event: String?
